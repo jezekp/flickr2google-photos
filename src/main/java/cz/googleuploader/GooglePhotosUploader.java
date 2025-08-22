@@ -1,0 +1,169 @@
+package cz.googleuploader;
+
+import com.google.api.client.auth.oauth2.Credential;
+import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
+import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
+import com.google.api.client.json.JsonFactory;
+import com.google.api.client.json.gson.GsonFactory;
+import com.google.api.client.util.store.FileDataStoreFactory;
+import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
+
+import com.google.auth.oauth2.AccessToken;
+import com.google.auth.oauth2.UserCredentials;
+import com.google.photos.library.v1.PhotosLibraryClient;
+import com.google.photos.library.v1.PhotosLibrarySettings;
+import com.google.photos.library.v1.upload.UploadMediaItemRequest;
+import com.google.photos.library.v1.upload.UploadMediaItemResponse;
+import com.google.photos.library.v1.proto.BatchCreateMediaItemsRequest;
+import com.google.photos.library.v1.proto.BatchCreateMediaItemsResponse;
+import com.google.photos.library.v1.proto.NewMediaItem;
+import com.google.photos.library.v1.proto.SimpleMediaItem;
+import com.google.photos.types.proto.Album;
+
+import java.io.File;
+import java.io.FileReader;
+import java.io.RandomAccessFile;
+import java.nio.file.*;
+import java.time.Instant;
+import java.util.*;
+
+import static cz.util.Utils.readLines;
+import static cz.util.Utils.writeLine;
+
+public class GooglePhotosUploader {
+
+    private static final String ALBUMS_FILE = "uploaded_albums.txt";
+
+    public static void main(String[] args) throws Exception {
+        if (args.length != 2) {
+            System.err.println("Použití: java GooglePhotosUploader <cesta_k_root_složce>, <cesta_k_client_secret.json>");
+            System.exit(1);
+        }
+
+        Path rootDir = Paths.get(args[0]);
+        String clientSecretPath = args[1];
+        if (!Files.isDirectory(rootDir)) {
+            throw new IllegalArgumentException("Zadaná cesta není adresář: " + rootDir);
+        }
+
+        // 1. Připravíme transport, JSON parser a načteme client_secret.json
+        JsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
+        var httpTransport = GoogleNetHttpTransport.newTrustedTransport();
+        GoogleClientSecrets clientSecrets = GoogleClientSecrets.load(
+                JSON_FACTORY,
+                new FileReader(clientSecretPath)
+        );
+
+// 2. Vytvoříme flow se stejnou složkou, kde máme uložené StoredCredential
+        var flow = new GoogleAuthorizationCodeFlow.Builder(
+                httpTransport, JSON_FACTORY,
+                clientSecrets, List.of("https://www.googleapis.com/auth/photoslibrary.appendonly")
+        )
+                .setDataStoreFactory(new FileDataStoreFactory(new File("tokens")))
+                .setAccessType("offline")
+                .build();
+
+// 3. Načteme uložený Credential pro uživatele "user"
+        Credential oldCredential = flow.loadCredential("user");
+        if (oldCredential == null || oldCredential.getRefreshToken() == null) {
+            throw new IllegalStateException("StoredCredential nenalezen nebo chybí refresh token");
+        }
+
+
+// 4. Vytvoříme AccessToken instanci
+        Instant expiresAt = Instant.ofEpochMilli(oldCredential.getExpirationTimeMilliseconds());
+        AccessToken initialToken = new AccessToken(oldCredential.getAccessToken(), Date.from(expiresAt));
+
+// 5. Sestavíme UserCredentials
+        UserCredentials userCredentials = UserCredentials.newBuilder()
+                .setClientId(clientSecrets.getDetails().getClientId())
+                .setClientSecret(clientSecrets.getDetails().getClientSecret())
+                .setRefreshToken(oldCredential.getRefreshToken())
+                .setAccessToken(initialToken)
+                .build();
+
+        if (userCredentials == null || userCredentials.getAccessToken() == null) {
+            throw new IllegalStateException("Token nebyl nalezen. Spusť nejprve autorizaci.");
+        }
+
+        // 4️⃣ Inicializace Google Photos klienta
+        PhotosLibrarySettings settings = PhotosLibrarySettings.newBuilder()
+                .setCredentialsProvider(() -> userCredentials)
+                .build();
+
+        var uploadedAlbums = readLines(ALBUMS_FILE);
+
+        try (PhotosLibraryClient client = PhotosLibraryClient.initialize(settings)) {
+            try (DirectoryStream<Path> albums = Files.newDirectoryStream(rootDir)) {
+                for (Path albumDir : albums) {
+                    if (!Files.isDirectory(albumDir)) continue;
+
+                    if (uploadedAlbums.contains(albumDir.getFileName().toString())) {
+                        System.out.println("Album již existuje: " + albumDir.getFileName());
+                        continue; // přeskočíme již nahraná alba
+                    }
+
+                    String albumTitle = albumDir.getFileName().toString();
+                    albumTitle = albumTitle.replaceAll("_", " "); // bezpečný název alba
+                    Album album = client.createAlbum(
+                            com.google.photos.library.v1.proto.CreateAlbumRequest.newBuilder()
+                                    .setAlbum(Album.newBuilder().setTitle(albumTitle).build())
+                                    .build()
+                    );
+                    System.out.println("📁 Vytvořeno album: " + albumTitle);
+
+                    List<NewMediaItem> items = new ArrayList<>();
+                    try (DirectoryStream<Path> photos = Files.newDirectoryStream(albumDir, "*.{jpg,jpeg,png,mov}")) {
+                        for (Path photo : photos) {
+                            try (RandomAccessFile raf = new RandomAccessFile(photo.toFile(), "r")) {
+                                UploadMediaItemRequest uploadRequest = UploadMediaItemRequest.newBuilder()
+                                        .setFileName(photo.getFileName().toString())
+                                        .setDataFile(raf)
+                                        .setMimeType(Files.probeContentType(photo))
+                                        .build();
+
+                                UploadMediaItemResponse uploadResponse = client.uploadMediaItem(uploadRequest);
+                                var uploadToken = uploadResponse.getUploadToken();
+
+                                items.add(NewMediaItem.newBuilder()
+                                        .setSimpleMediaItem(SimpleMediaItem.newBuilder()
+                                                .setUploadToken(uploadToken.get())
+                                                .build())
+                                        .build());
+
+                                System.out.println("  🔄 Připraveno: " + photo.getFileName());
+                            }
+                        }
+                    }
+
+                    if (!items.isEmpty()) {
+                        final int MAX_BATCH = 50;
+                        for (int start = 0; start < items.size(); start += MAX_BATCH) {
+                            int end = Math.min(items.size(), start + MAX_BATCH);
+                            List<NewMediaItem> chunk = items.subList(start, end);
+
+                            BatchCreateMediaItemsResponse resp = client.batchCreateMediaItems(
+                                    BatchCreateMediaItemsRequest.newBuilder()
+                                            .setAlbumId(album.getId())
+                                            .addAllNewMediaItems(chunk)
+                                            .build()
+                            );
+
+                            resp.getNewMediaItemResultsList().forEach(r -> {
+                                if (r.getStatus().getCode() == 0) {
+                                    System.out.println("    ✅ Nahráno: " +
+                                            r.getMediaItem().getFilename());
+                                } else {
+                                    System.err.println("    ❌ Chyba: " +
+                                            r.getStatus().getMessage());
+                                }
+                            });
+                        }
+                    }
+
+                    writeLine(ALBUMS_FILE, albumDir.getFileName().toString()); // přidáme název alba do souboru
+                }
+            }
+        }
+    }
+}

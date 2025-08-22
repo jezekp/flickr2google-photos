@@ -15,3 +15,8 @@ buildNumber.properties
 .project
 # JDT-specific (Eclipse Java Development Tools)
 .classpath
+
+tokens/
+flickr.properties
+downloaded_albums.txt
+uploaded_albums.txt
