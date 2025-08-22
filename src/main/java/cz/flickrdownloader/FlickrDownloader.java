@@ -114,16 +114,11 @@ public class FlickrDownloader {
                 limiter.acquire(); // dodržujeme max DOWNLOAD_RATE
 
                 Collection<Size> sizes = flickr.getPhotosInterface().getSizes(photo.getId());
-//
+
                 var size = sizes.stream().filter(s -> (s.getMedia() == Media.photo && s.getLabelName().equals("Original")) ||
                         s.getMedia() == Media.video && s.getLabelName().equals("Video Original")).max(Comparator.comparingInt(Size::getLabel));
 
                 String photoUrl = size.get().getSource();
-
-
-//                String photoUrl = photo.getOriginalUrl()
-//                        .replaceFirst("farm\\d+\\.staticflickr\\.com", "live.staticflickr.com")  // fallback doména
-//                        .replace("http://", "https://");
 
                 String baseName = photo.getTitle()
                         .replaceAll("[^\\p{L}\\d_\\-\\.]", "_");
