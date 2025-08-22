@@ -130,7 +130,13 @@ public class FlickrDownloader {
 
                 baseName = baseName.isEmpty() ? "photo_" + photo.getId() : baseName;
 
-                String fileName = baseName + "." + photo.getOriginalFormat();
+                String suffix =
+                        baseName.toLowerCase().endsWith(".jpg") ||
+                        baseName.toLowerCase().endsWith(".jpeg") ||
+                        baseName.toLowerCase().endsWith(".png") ||
+                        baseName.toLowerCase().endsWith(".mov") ? "" : "." + photo.getOriginalFormat();
+
+                String fileName = baseName + suffix;
                 Path filePath = albumPath.resolve(fileName);
 
 
