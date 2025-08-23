@@ -20,4 +20,5 @@ tokens/
 flickr.properties
 downloaded_albums.txt
 uploaded_albums.txt
+downloaded_photos.txt
 .idea

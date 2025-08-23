@@ -15,6 +15,7 @@ import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.TreeSet;
 
 public class Utils {
 
@@ -45,8 +46,8 @@ public class Utils {
         }
     }
 
-    public static ArrayList<String> readLines(String filePath) {
-        ArrayList<String> lines = new ArrayList<>();
+    public static TreeSet<String> readLines(String filePath) {
+        TreeSet<String> lines = new TreeSet<>();
         try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
             String line;
             while ((line = reader.readLine()) != null) {

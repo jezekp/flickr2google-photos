@@ -37,11 +37,12 @@ import static cz.util.Utils.writeLine;
 
 public class FlickrDownloader {
 
-    private static final int MAX_RETRIES = 5;
+    private static final int MAX_RETRIES = 10;
     private static final long BASE_BACKOFF = 1_000; // 1s základní backoff
-    private static final double DOWNLOAD_RATE = 2.0;   // permity za sekundu
+    private static final double DOWNLOAD_RATE = 1.0;   // permity za sekundu
 
     private static final String ALBUMS_FILE = "downloaded_albums.txt"; // soubor pro uložení alb
+    private static final String PHOTOS_FILE = "downloaded_photos.txt";
 
     public static void main(String[] args) throws Exception {
 
@@ -88,8 +89,10 @@ public class FlickrDownloader {
         RateLimiter limiter = RateLimiter.create(DOWNLOAD_RATE);
 
         var downloadedAlbums = readLines(ALBUMS_FILE);
+        var downloadedPhotos = readLines(PHOTOS_FILE);
 
         for (Photoset set : sets.getPhotosets()) {
+            var readingProblem = false;
             String albumTitle = set.getTitle()
                     .replaceAll("[^\\p{L}\\d_\\-\\.]", "_");
             if (downloadedAlbums.contains(albumTitle)) {
@@ -111,6 +114,12 @@ public class FlickrDownloader {
             var photos = psi.getPhotos(set.getId(), 5000, 1);
 
             for (Photo photo : photos) {
+
+                if (downloadedPhotos.contains(photo.getId())) {
+                    System.out.println("  ⏭️ Přeskočeno: " + photo.getTitle() + " (" + photo.getId() + ")");
+                    continue; // přeskočíme již stažené fotky
+                }
+
                 limiter.acquire(); // dodržujeme max DOWNLOAD_RATE
 
                 Collection<Size> sizes = flickr.getPhotosInterface().getSizes(photo.getId());
@@ -151,6 +160,7 @@ public class FlickrDownloader {
                         }
                         System.out.println("  ✅ Staženo: " + fileName);
                         success = true;
+                        writeLine(PHOTOS_FILE, photo.getId());
 
                     } else if (code == 429) {
                         // Too Many Requests
@@ -159,12 +169,12 @@ public class FlickrDownloader {
                                 ? TimeUnit.SECONDS.toMillis(Long.parseLong(retryAfter))
                                 : backoff;
                         System.err.println("  ⚠️ 429, čekám " + wait + " ms a zkouším znovu ("
-                                + attempt + "/" + MAX_RETRIES + ")");
+                                + attempt + "/" + MAX_RETRIES + ") " + fileName);
                         Thread.sleep(wait);
                         backoff *= 2; // exponenciální backoff
 
                     } else {
-                        System.err.println("  ❌ HTTP " + code + " při stahování " + photoUrl);
+                        System.err.println("  ❌ HTTP " + code + " při stahování " + photoUrl + " " + fileName);
                         break;
                     }
                 }
@@ -172,9 +182,12 @@ public class FlickrDownloader {
                 if (!success) {
                     System.err.println("  ❌ Nezdařilo se stáhnout po " +
                             MAX_RETRIES + " pokusech: " + photoUrl);
+                    readingProblem = true;
                 }
             }
-            writeLine(ALBUMS_FILE, albumTitle);
+            if (!readingProblem) {
+                writeLine(ALBUMS_FILE, albumTitle);
+            }
         }
 
         System.out.println("🎉 Hotovo!");
