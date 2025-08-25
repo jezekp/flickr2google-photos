@@ -32,7 +32,7 @@ import static cz.util.Utils.writeLine;
 
 public class GooglePhotosUploader {
 
-    private static final String ALBUMS_FILE = "uploaded_albums.txt";
+    private static final String UPLOADED_FILES = "uploaded_files.txt";
 
     public static void main(String[] args) throws Exception {
         if (args.length != 2) {
@@ -91,17 +91,12 @@ public class GooglePhotosUploader {
                 .setCredentialsProvider(() -> userCredentials)
                 .build();
 
-        var uploadedAlbums = readLines(ALBUMS_FILE);
+        var uploadedFiles = readLines(UPLOADED_FILES);
 
         try (PhotosLibraryClient client = PhotosLibraryClient.initialize(settings)) {
             try (DirectoryStream<Path> albums = Files.newDirectoryStream(rootDir)) {
                 for (Path albumDir : albums) {
                     if (!Files.isDirectory(albumDir)) continue;
-
-                    if (uploadedAlbums.contains(albumDir.getFileName().toString())) {
-                        System.out.println("Album již existuje: " + albumDir.getFileName());
-                        continue; // přeskočíme již nahraná alba
-                    }
 
                     String albumTitle = albumDir.getFileName().toString();
                     albumTitle = albumTitle.replaceAll("_", " "); // bezpečný název alba
@@ -113,8 +108,14 @@ public class GooglePhotosUploader {
                     System.out.println("📁 Vytvořeno album: " + albumTitle);
 
                     List<NewMediaItem> items = new ArrayList<>();
-                    try (DirectoryStream<Path> photos = Files.newDirectoryStream(albumDir, "*.{jpg,jpeg,png,mov}")) {
+                    try (DirectoryStream<Path> photos = Files.newDirectoryStream(albumDir, "*.{jpg,jpeg,png,mov,mp4}")) {
                         for (Path photo : photos) {
+
+                            if (uploadedFiles.contains(albumDir.getFileName().toString() + "/" + photo.getFileName().toString())) {
+                                System.out.println("  ⏭️ Přeskočeno (již nahráno): " + photo.getFileName());
+                                continue;
+                            }
+
                             try (RandomAccessFile raf = new RandomAccessFile(photo.toFile(), "r")) {
                                 UploadMediaItemRequest uploadRequest = UploadMediaItemRequest.newBuilder()
                                         .setFileName(photo.getFileName().toString())
@@ -153,6 +154,9 @@ public class GooglePhotosUploader {
                                 if (r.getStatus().getCode() == 0) {
                                     System.out.println("    ✅ Nahráno: " +
                                             r.getMediaItem().getFilename());
+
+                                    writeLine(UPLOADED_FILES, albumDir.getFileName().toString() + "/" + r.getMediaItem().getFilename());
+
                                 } else {
                                     System.err.println("    ❌ Chyba: " +
                                             r.getStatus().getMessage());
@@ -160,8 +164,6 @@ public class GooglePhotosUploader {
                             });
                         }
                     }
-
-                    writeLine(ALBUMS_FILE, albumDir.getFileName().toString()); // přidáme název alba do souboru
                 }
             }
         }

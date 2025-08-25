@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>cz.google</groupId>
@@ -16,12 +17,16 @@
     </repositories>
 
     <properties>
-        <!-- řekni Maven Compiler Pluginu, že chceš JDK21 syntax -->
+        <!-- kompilovat jako Java 21 -->
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
+
+        <!-- verze gRPC knihoven -->
+        <grpc.version>1.57.0</grpc.version>
     </properties>
 
     <dependencies>
+        <!-- Flickr + OAuth -->
         <dependency>
             <groupId>com.google.oauth-client</groupId>
             <artifactId>google-oauth-client-jetty</artifactId>
@@ -32,39 +37,40 @@
             <artifactId>google-api-services-oauth2</artifactId>
             <version>v2-rev157-1.25.0</version>
         </dependency>
-
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
             <version>4.12.0</version>
         </dependency>
-
         <dependency>
             <groupId>com.flickr4java</groupId>
             <artifactId>flickr4java</artifactId>
             <version>3.0.9</version>
         </dependency>
-
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-simple</artifactId>
             <version>2.0.9</version>
         </dependency>
 
-        <!-- Google Photos Library Client -->
+        <!-- Google Photos Library + Auth -->
         <dependency>
             <groupId>com.google.photos.library</groupId>
             <artifactId>google-photos-library-client</artifactId>
             <version>1.7.3</version>
         </dependency>
-
-        <!-- Google Auth Library (pro GoogleCredentials) -->
         <dependency>
             <groupId>com.google.auth</groupId>
             <artifactId>google-auth-library-oauth2-http</artifactId>
             <version>1.37.1</version>
         </dependency>
 
+        <!-- gRPC transport s pick_first load balancer -->
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-netty-shaded</artifactId>
+            <version>${grpc.version}</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -73,16 +79,15 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
                 <version>3.5.0</version>
-
-                <!-- Zakážeme defaultní JAR -->
                 <executions>
+
+                    <!-- vypneme defaultní jar -->
                     <execution>
                         <id>default-jar</id>
                         <phase>none</phase>
                     </execution>
 
-
-                    <!-- A) flickr auth -->
+                    <!-- 1) flickr-auth -->
                     <execution>
                         <id>flickr-auth</id>
                         <phase>package</phase>
@@ -90,6 +95,8 @@
                             <goal>shade</goal>
                         </goals>
                         <configuration>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>flickr-auth</shadedClassifierName>
                             <filters>
                                 <filter>
                                     <artifact>*:*</artifact>
@@ -100,18 +107,18 @@
                                     </excludes>
                                 </filter>
                             </filters>
-                            <shadedArtifactAttached>true</shadedArtifactAttached>
-                            <shadedClassifierName>flickr-auth</shadedClassifierName>
                             <transformers>
-                                <transformer
-                                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                <!-- sloučení všech META-INF/services -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <!-- manifest s Main-Class -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>cz.flickrdownloader.FlickrAuth</mainClass>
                                 </transformer>
                             </transformers>
                         </configuration>
                     </execution>
 
-                    <!-- A) flickr downloader -->
+                    <!-- 2) flickr-downloader -->
                     <execution>
                         <id>flickr-downloader</id>
                         <phase>package</phase>
@@ -132,17 +139,17 @@
                                 </filter>
                             </filters>
                             <transformers>
-                                <transformer
-                                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>cz.flickrdownloader.FlickrDownloader</mainClass>
                                 </transformer>
                             </transformers>
                         </configuration>
                     </execution>
 
-                    <!-- A) google photos auth -->
+                    <!-- 3) google-photos-auth -->
                     <execution>
-                        <id>google-photos-aut</id>
+                        <id>google-photos-auth</id>
                         <phase>package</phase>
                         <goals>
                             <goal>shade</goal>
@@ -161,15 +168,15 @@
                                 </filter>
                             </filters>
                             <transformers>
-                                <transformer
-                                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>cz.googleuploader.GooglePhotosAuth</mainClass>
                                 </transformer>
                             </transformers>
                         </configuration>
                     </execution>
 
-                    <!-- A) google photos uploader -->
+                    <!-- 4) google-photos-uploader -->
                     <execution>
                         <id>google-photos-uploader</id>
                         <phase>package</phase>
@@ -190,13 +197,14 @@
                                 </filter>
                             </filters>
                             <transformers>
-                                <transformer
-                                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>cz.googleuploader.GooglePhotosUploader</mainClass>
                                 </transformer>
                             </transformers>
                         </configuration>
                     </execution>
+
                 </executions>
             </plugin>
         </plugins>
