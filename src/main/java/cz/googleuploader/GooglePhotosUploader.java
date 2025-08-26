@@ -133,7 +133,7 @@ public class GooglePhotosUploader {
 
                     List<NewMediaItem> items = new ArrayList<>();
                     try (DirectoryStream<Path> photos =
-                                 Files.newDirectoryStream(albumDir, "*.{jpg,jpeg,png,mov,mp4}")) {
+                                 Files.newDirectoryStream(albumDir, "*.{jpg,jpeg,png,mov,mp4,JPG,JPEG,PNG,MOV,MP4}")) {
                         for (Path photo : photos) {
                             String relativePath = albumDir.getFileName() + "/" + photo.getFileName();
                             if (uploadedFiles.contains(relativePath)) {
@@ -184,7 +184,7 @@ public class GooglePhotosUploader {
                                             albumDir.getFileName() + "/" + r.getMediaItem().getFilename());
                                 } else {
                                     System.err.println("    ❌ Chyba: " +
-                                            r.getStatus().getMessage());
+                                            r.getStatus().getMessage() + " "  + r.getMediaItem().getFilename());
                                 }
                             });
                         }
