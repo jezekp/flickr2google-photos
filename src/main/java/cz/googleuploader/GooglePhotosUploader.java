@@ -12,6 +12,8 @@ import com.google.auth.oauth2.AccessToken;
 import com.google.auth.oauth2.UserCredentials;
 import com.google.photos.library.v1.PhotosLibraryClient;
 import com.google.photos.library.v1.PhotosLibrarySettings;
+import com.google.photos.library.v1.proto.CreateAlbumRequest;
+import com.google.photos.library.v1.proto.ListAlbumsRequest;
 import com.google.photos.library.v1.upload.UploadMediaItemRequest;
 import com.google.photos.library.v1.upload.UploadMediaItemResponse;
 import com.google.photos.library.v1.proto.BatchCreateMediaItemsRequest;
@@ -94,24 +96,40 @@ public class GooglePhotosUploader {
         var uploadedFiles = readLines(UPLOADED_FILES);
 
         try (PhotosLibraryClient client = PhotosLibraryClient.initialize(settings)) {
+            // Nacteme všechna existující alba jednou dopředu
+            Map<String, Album> existingAlbums = new HashMap<>();
+            client.listAlbums(ListAlbumsRequest.newBuilder().setPageSize(50).build())
+                    .iterateAll()
+                    .forEach(album -> existingAlbums.put(album.getTitle(), album));
+
             try (DirectoryStream<Path> albums = Files.newDirectoryStream(rootDir)) {
                 for (Path albumDir : albums) {
                     if (!Files.isDirectory(albumDir)) continue;
 
-                    String albumTitle = albumDir.getFileName().toString();
-                    albumTitle = albumTitle.replaceAll("_", " "); // bezpečný název alba
-                    Album album = client.createAlbum(
-                            com.google.photos.library.v1.proto.CreateAlbumRequest.newBuilder()
-                                    .setAlbum(Album.newBuilder().setTitle(albumTitle).build())
-                                    .build()
-                    );
-                    System.out.println("📁 Vytvořeno album: " + albumTitle);
+                    String albumTitle = albumDir.getFileName().toString()
+                            .replaceAll("_", " "); // bezpečný název alba
+
+                    // Pokud už album existuje, použijeme ho, jinak ho vytvoříme
+                    Album album = existingAlbums.get(albumTitle);
+                    if (album == null) {
+                        album = client.createAlbum(
+                                CreateAlbumRequest.newBuilder()
+                                        .setAlbum(Album.newBuilder().setTitle(albumTitle).build())
+                                        .build());
+                        System.out.println("📁 Vytvořeno nové album: " + albumTitle);
+
+                        // Přidáme do mapy, aby bylo dostupné pro další kola
+                        existingAlbums.put(albumTitle, album);
+                    } else {
+                        System.out.println("📁 Používám existující album: " + albumTitle);
+                    }
 
                     List<NewMediaItem> items = new ArrayList<>();
-                    try (DirectoryStream<Path> photos = Files.newDirectoryStream(albumDir, "*.{jpg,jpeg,png,mov,mp4}")) {
+                    try (DirectoryStream<Path> photos =
+                                 Files.newDirectoryStream(albumDir, "*.{jpg,jpeg,png,mov,mp4}")) {
                         for (Path photo : photos) {
-
-                            if (uploadedFiles.contains(albumDir.getFileName().toString() + "/" + photo.getFileName().toString())) {
+                            String relativePath = albumDir.getFileName() + "/" + photo.getFileName();
+                            if (uploadedFiles.contains(relativePath)) {
                                 System.out.println("  ⏭️ Přeskočeno (již nahráno): " + photo.getFileName());
                                 continue;
                             }
@@ -119,16 +137,16 @@ public class GooglePhotosUploader {
                             try (RandomAccessFile raf = new RandomAccessFile(photo.toFile(), "r")) {
                                 UploadMediaItemRequest uploadRequest = UploadMediaItemRequest.newBuilder()
                                         .setFileName(photo.getFileName().toString())
-                                        .setDataFile(raf)
                                         .setMimeType(Files.probeContentType(photo))
+                                        .setDataFile(raf)
                                         .build();
 
                                 UploadMediaItemResponse uploadResponse = client.uploadMediaItem(uploadRequest);
-                                var uploadToken = uploadResponse.getUploadToken();
+                                String uploadToken = uploadResponse.getUploadToken().get();
 
                                 items.add(NewMediaItem.newBuilder()
                                         .setSimpleMediaItem(SimpleMediaItem.newBuilder()
-                                                .setUploadToken(uploadToken.get())
+                                                .setUploadToken(uploadToken)
                                                 .build())
                                         .build());
 
@@ -155,8 +173,8 @@ public class GooglePhotosUploader {
                                     System.out.println("    ✅ Nahráno: " +
                                             r.getMediaItem().getFilename());
 
-                                    writeLine(UPLOADED_FILES, albumDir.getFileName().toString() + "/" + r.getMediaItem().getFilename());
-
+                                    writeLine(UPLOADED_FILES,
+                                            albumDir.getFileName() + "/" + r.getMediaItem().getFilename());
                                 } else {
                                     System.err.println("    ❌ Chyba: " +
                                             r.getStatus().getMessage());
