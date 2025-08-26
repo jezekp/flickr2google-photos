@@ -1,13 +1,17 @@
 package cz.googleuploader;
 
 import com.google.api.client.auth.oauth2.Credential;
+import com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp;
+import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
 import com.google.api.client.json.JsonFactory;
 import com.google.api.client.json.gson.GsonFactory;
+import com.google.api.client.json.jackson2.JacksonFactory;
 import com.google.api.client.util.store.FileDataStoreFactory;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 
+import com.google.api.gax.core.FixedCredentialsProvider;
 import com.google.auth.oauth2.AccessToken;
 import com.google.auth.oauth2.UserCredentials;
 import com.google.photos.library.v1.PhotosLibraryClient;
@@ -23,12 +27,15 @@ import com.google.photos.library.v1.proto.SimpleMediaItem;
 import com.google.photos.types.proto.Album;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileReader;
+import java.io.InputStreamReader;
 import java.io.RandomAccessFile;
 import java.nio.file.*;
 import java.time.Instant;
 import java.util.*;
 
+import static cz.googleuploader.GooglePhotosAuth.SCOPES;
 import static cz.util.Utils.readLines;
 import static cz.util.Utils.writeLine;
 
@@ -59,7 +66,7 @@ public class GooglePhotosUploader {
 // 2. Vytvoříme flow se stejnou složkou, kde máme uložené StoredCredential
         var flow = new GoogleAuthorizationCodeFlow.Builder(
                 httpTransport, JSON_FACTORY,
-                clientSecrets, List.of("https://www.googleapis.com/auth/photoslibrary.appendonly")
+                clientSecrets, SCOPES
         )
                 .setDataStoreFactory(new FileDataStoreFactory(new File("tokens")))
                 .setAccessType("offline")
