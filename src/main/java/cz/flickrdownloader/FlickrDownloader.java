@@ -78,12 +78,13 @@ public class FlickrDownloader {
 
         RequestContext.getRequestContext().setAuth(auth);
 
+        var userId = auth.getUser().getId();
         System.out.println("Přihlášen jako: " + auth.getUser().getUsername() +
-                " (" + auth.getUser().getId() + "), perms=" + auth.getPermission());
+                " (" + userId + "), perms=" + auth.getPermission());
 
         // --- načtení alb ---
         PhotosetsInterface psi = flickr.getPhotosetsInterface();
-        Photosets sets = psi.getList(auth.getUser().getId(), 500, 1, null);
+        Photosets sets = psi.getList(userId, 500, 1, null);
 
         // --- RateLimiter pro stahování ---
         RateLimiter limiter = RateLimiter.create(DOWNLOAD_RATE);
@@ -110,79 +111,84 @@ public class FlickrDownloader {
             Files.createDirectories(albumPath);
             System.out.println("📁 Stahuji album: " + albumTitle);
 
-            // stáhneme všech 500 fotek z alba (jedna stránka)
-            var photos = psi.getPhotos(set.getId(), 5000, 1);
+            var perPage = 500;
+            // Zjištění počtu stránek
+            var info = psi.getInfo(set.getId());
+            int pages = info.getPhotoCount() / perPage + 1;
 
-            for (Photo photo : photos) {
+            for (int page = 1; page <= pages; page++) {
+                var photos = psi.getPhotos(set.getId(), perPage, page);
+                for (Photo photo : photos) {
 
-                if (downloadedPhotos.contains(photo.getId())) {
-                    System.out.println("  ⏭️ Přeskočeno: " + photo.getTitle() + " (" + photo.getId() + ")");
-                    continue; // přeskočíme již stažené fotky
-                }
-
-                limiter.acquire(); // dodržujeme max DOWNLOAD_RATE
-
-                Collection<Size> sizes = flickr.getPhotosInterface().getSizes(photo.getId());
-
-                var size = sizes.stream().filter(s -> (s.getMedia() == Media.photo && s.getLabelName().equals("Original")) ||
-                        s.getMedia() == Media.video && s.getLabelName().equals("Video Original")).max(Comparator.comparingInt(Size::getLabel));
-
-                String photoUrl = size.get().getSource();
-
-                String baseName = photo.getTitle()
-                        .replaceAll("[^\\p{L}\\d_\\-\\.]", "_");
-
-                baseName = baseName.isEmpty() ? "photo_" + photo.getId() : baseName;
-
-                String suffix =
-                        baseName.toLowerCase().endsWith(".jpg") ||
-                        baseName.toLowerCase().endsWith(".jpeg") ||
-                        baseName.toLowerCase().endsWith(".png") ||
-                        baseName.toLowerCase().endsWith(".mov") ? "" : "." + photo.getOriginalFormat();
-
-                String fileName = baseName + suffix;
-                Path filePath = albumPath.resolve(fileName);
-
-
-                boolean success = false;
-                long backoff = BASE_BACKOFF;
-
-                for (int attempt = 1; attempt <= MAX_RETRIES && !success; attempt++) {
-                    HttpURLConnection conn = (HttpURLConnection) new URL(photoUrl).openConnection();
-                    conn.setRequestProperty("User-Agent", "cz.flickrdownloader.FlickrDownloader/1.0");
-                    conn.setConnectTimeout(10_000);
-                    conn.setReadTimeout(10_000);
-
-                    int code = conn.getResponseCode();
-                    if (code == 200) {
-                        try (InputStream in = conn.getInputStream()) {
-                            Files.copy(in, filePath, StandardCopyOption.REPLACE_EXISTING);
-                        }
-                        System.out.println("  ✅ Staženo: " + fileName);
-                        success = true;
-                        writeLine(PHOTOS_FILE, photo.getId());
-
-                    } else if (code == 429) {
-                        // Too Many Requests
-                        String retryAfter = conn.getHeaderField("Retry-After");
-                        long wait = retryAfter != null
-                                ? TimeUnit.SECONDS.toMillis(Long.parseLong(retryAfter))
-                                : backoff;
-                        System.err.println("  ⚠️ 429, čekám " + wait + " ms a zkouším znovu ("
-                                + attempt + "/" + MAX_RETRIES + ") " + fileName);
-                        Thread.sleep(wait);
-                        backoff *= 2; // exponenciální backoff
-
-                    } else {
-                        System.err.println("  ❌ HTTP " + code + " při stahování " + photoUrl + " " + fileName);
-                        break;
+                    if (downloadedPhotos.contains(photo.getId())) {
+                        System.out.println("  ⏭️ Přeskočeno: " + photo.getTitle() + " (" + photo.getId() + ")");
+                        continue; // přeskočíme již stažené fotky
                     }
-                }
 
-                if (!success) {
-                    System.err.println("  ❌ Nezdařilo se stáhnout po " +
-                            MAX_RETRIES + " pokusech: " + photoUrl);
-                    readingProblem = true;
+                    limiter.acquire(); // dodržujeme max DOWNLOAD_RATE
+
+                    Collection<Size> sizes = flickr.getPhotosInterface().getSizes(photo.getId());
+
+                    var size = sizes.stream().filter(s -> (s.getMedia() == Media.photo && s.getLabelName().equals("Original")) ||
+                            s.getMedia() == Media.video && s.getLabelName().equals("Video Original")).max(Comparator.comparingInt(Size::getLabel));
+
+                    String photoUrl = size.get().getSource();
+
+                    String baseName = photo.getTitle()
+                            .replaceAll("[^\\p{L}\\d_\\-\\.]", "_");
+
+                    baseName = baseName.isEmpty() ? "photo_" + photo.getId() : baseName;
+
+                    String suffix =
+                            baseName.toLowerCase().endsWith(".jpg") ||
+                                    baseName.toLowerCase().endsWith(".jpeg") ||
+                                    baseName.toLowerCase().endsWith(".png") ||
+                                    baseName.toLowerCase().endsWith(".mov") ? "" : "." + photo.getOriginalFormat();
+
+                    String fileName = baseName + suffix;
+                    Path filePath = albumPath.resolve(fileName);
+
+
+                    boolean success = false;
+                    long backoff = BASE_BACKOFF;
+
+                    for (int attempt = 1; attempt <= MAX_RETRIES && !success; attempt++) {
+                        HttpURLConnection conn = (HttpURLConnection) new URL(photoUrl).openConnection();
+                        conn.setRequestProperty("User-Agent", "cz.flickrdownloader.FlickrDownloader/1.0");
+                        conn.setConnectTimeout(10_000);
+                        conn.setReadTimeout(10_000);
+
+                        int code = conn.getResponseCode();
+                        if (code == 200) {
+                            try (InputStream in = conn.getInputStream()) {
+                                Files.copy(in, filePath, StandardCopyOption.REPLACE_EXISTING);
+                            }
+                            System.out.println("  ✅ Staženo: " + fileName);
+                            success = true;
+                            writeLine(PHOTOS_FILE, photo.getId());
+
+                        } else if (code == 429) {
+                            // Too Many Requests
+                            String retryAfter = conn.getHeaderField("Retry-After");
+                            long wait = retryAfter != null
+                                    ? TimeUnit.SECONDS.toMillis(Long.parseLong(retryAfter))
+                                    : backoff;
+                            System.err.println("  ⚠️ 429, čekám " + wait + " ms a zkouším znovu ("
+                                    + attempt + "/" + MAX_RETRIES + ") " + fileName);
+                            Thread.sleep(wait);
+                            backoff *= 2; // exponenciální backoff
+
+                        } else {
+                            System.err.println("  ❌ HTTP " + code + " při stahování " + photoUrl + " " + fileName);
+                            break;
+                        }
+                    }
+
+                    if (!success) {
+                        System.err.println("  ❌ Nezdařilo se stáhnout po " +
+                                MAX_RETRIES + " pokusech: " + photoUrl);
+                        readingProblem = true;
+                    }
                 }
             }
             if (!readingProblem) {
